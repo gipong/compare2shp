@@ -168,7 +168,7 @@ DBFParser.load = function(url, encoding, callback, returnData) {
         xhrText.overrideMimeType('text/plain; charset='+encoding);
 
         xhrText.onload = function() {
-            geojsonData['dbf'] = new DBFParser().parse(xhr.response,url,xhrText.responseText);
+            geojsonData['dbf'] = new DBFParser().parse(xhr.response,url,xhrText.responseText,encoding);
             callback(geojsonData['dbf'], returnData);
             URL.revokeObjectURL(url);
         };
@@ -180,10 +180,12 @@ DBFParser.load = function(url, encoding, callback, returnData) {
 
 };
 
-DBFParser.prototype.parse = function(arrayBuffer,src,response) {
-    var o = {};
-    var dv = new DataView(arrayBuffer);
-    var idx = 0;
+DBFParser.prototype.parse = function(arrayBuffer,src,response,encoding) {
+    var o = {},
+        dv = new DataView(arrayBuffer),
+        idx = 0,
+        offset = (encoding.match(/big5/i))?2:3;
+
     o.fileName = src;
     o.version = dv.getInt8(idx, false);
 
@@ -219,8 +221,18 @@ DBFParser.prototype.parse = function(arrayBuffer,src,response) {
     idx += 2;
 
     o.fields = [];
-    responseHeader = response.split('\r')[0];
-    responseHeader = responseHeader.slice(32, responseHeader.length);
+
+    var response_handler = response.split('\r');
+
+    if(response_handler.length > 2) {
+        response_handler.pop();
+        responseHeader = response_handler.join('\r');
+        responseHeader = responseHeader.slice(32, responseHeader.length);
+    } else {
+        responseHeader = response_handler[0];
+        responseHeader = responseHeader.slice(32, responseHeader.length);
+        offset = 2;
+    }
 
     var charString = [],
         count = 0,
@@ -232,7 +244,7 @@ DBFParser.prototype.parse = function(arrayBuffer,src,response) {
             try {
                 if( encodeURIComponent(responseHeader[z]).match(/%[A-F\d]{2}/g) ) {
                     if( encodeURIComponent(responseHeader[z]).match(/%[A-F\d]{2}/g).length > 1 ) {
-                        count += 2;
+                        count += offset;
                         z++;
                     } else {
                         count += 1;
@@ -253,8 +265,8 @@ DBFParser.prototype.parse = function(arrayBuffer,src,response) {
     }
 
     while (true) {
-        var field = {};
-        var nameArray = [];
+        var field = {},
+            nameArray = [];
 
         for (var i = 0, z=0; i < 10; i++) {
             var letter = dv.getUint8(idx);
@@ -295,11 +307,12 @@ DBFParser.prototype.parse = function(arrayBuffer,src,response) {
     o.fieldpos = idx;
     o.records = [];
 
-    responseText = response.split('\r')[1];
+    responseText = response.split('\r')[response.split('\r').length-1];
 
     for (var i = 0; i < o.numberOfRecords; i++) {
         responseText = responseText.slice(1, responseText.length);
         var record = {};
+
         for (var j = 0; j < o.fields.length; j++) {
             var charString = [],
                 count = 0,
@@ -309,8 +322,9 @@ DBFParser.prototype.parse = function(arrayBuffer,src,response) {
                 try {
                     if( encodeURIComponent(responseText[z]).match(/%[A-F\d]{2}/g) ) {
                         if( encodeURIComponent(responseText[z]).match(/%[A-F\d]{2}/g).length > 1 ) {
-                            count += 2;
+                            count += offset;
                             z++;
+                            check = 1;
                         } else {
                             count += 1;
                             z++;
@@ -325,9 +339,15 @@ DBFParser.prototype.parse = function(arrayBuffer,src,response) {
                 }
             }
 
-          charString.push(responseText.slice(0, z).replace(/\0/g, ''))
-          responseText =  responseText.slice(z, responseText.length);
-          record[o.fields[j].name] = charString.join('').trim();
+            charString.push(responseText.slice(0, z).replace(/\0/g, ''));
+            responseText =  responseText.slice(z, responseText.length);
+
+            if(charString.join('').trim().match(/\d{1}\.\d{11}e\+\d{3}/g)) {
+                record[o.fields[j].name] = parseFloat(charString.join('').trim());
+            } else {
+                record[o.fields[j].name] = charString.join('').trim();
+            }
+
         }
         o.records.push(record);
     }
